@@ -1,60 +1,28 @@
-use iced::Event;
-use iced::futures::stream::{Stream, StreamExt};
 use iced::{
-  Element, Subscription, Task as Command,
-  futures::SinkExt,
-  keyboard, stream,
-  widget::{Text, button},
-  window,
+  Element, Subscription, Task as Command, keyboard,
+  widget::Text,
+  window::{self, Mode},
 };
-use std::arch::x86_64::_CMP_FALSE_OQ;
-use std::default;
-use std::io::Write;
-use std::{fmt::Error, time::Duration};
-use tray_icon::TrayIcon;
-use tray_icon::menu::PredefinedMenuItem;
-use tray_icon::{
-  TrayIconBuilder,
-  menu::{Menu, MenuItem},
-};
+use std::{sync::Arc, time::Duration};
+use tray::BzMenuType;
+use tray_icon::{TrayIcon, menu::MenuEvent};
 
-fn new_tray_menu() -> Menu {
-  let tray_menu = Menu::new();
-  let item1 = MenuItem::new("显示", true, None);
-  let item2 = PredefinedMenuItem::quit(Some("退出"));
-  tray_menu.append(&item1).unwrap();
-  tray_menu.append(&item2).unwrap();
-  tray_menu
-}
+mod tray;
 
 pub fn main() -> iced::Result {
   env_logger::init();
 
-  let res =
-    iced::application("BzDownloader", BzDownloader::update, BzDownloader::view)
-      .subscription(BzDownloader::subscription)
-      .window_size((500.0, 800.0))
-      .exit_on_close_request(false)
-      .run_with(BzDownloader::new);
-
-  println!("Hello, world!");
-  res
+  iced::application("BzDownloader", BzDownloader::update, BzDownloader::view)
+    .subscription(BzDownloader::subscription)
+    .window_size((500.0, 800.0))
+    .exit_on_close_request(false)
+    .run_with(BzDownloader::new)
 }
 
-struct BzDownloader {
-  is_loading: bool,
-  tray_icon: Option<TrayIcon>,
-  state: AppState,
-}
+enum BzDownloader {
+  Loading(tray::TrayState),
 
-impl Default for BzDownloader {
-  fn default() -> Self {
-    Self {
-      is_loading: true,
-      tray_icon: None,
-      state: AppState::default(),
-    }
-  }
+  Loaded(AppState),
 }
 
 #[derive(Debug)]
@@ -73,80 +41,94 @@ struct DownloadTask {
   status: TaskStatus,
 }
 
-#[derive(Debug)]
 struct AppState {
+  tray_state: tray::TrayState,
   tasks: Vec<DownloadTask>,
-}
-
-impl Default for AppState {
-  fn default() -> Self {
-    return Self { tasks: Vec::new() };
-  }
 }
 
 #[derive(Debug)]
 enum Message {
   Loaded(String),
-  TrayIconEvent,
-  AddTask(String),
-  PauseTask(usize),
-  RestartTask(usize),
-  RemoveTask(usize),
+  TrayMenuEvent(MenuEvent),
+  BzTask(BzTaskMessage),
   WindowCloseRequest,
   ToggleFullscreen(window::Mode),
 }
 
+#[derive(Debug)]
+enum BzTaskMessage {
+  AddTask(String),
+  PauseTask(usize),
+  RestartTask(usize),
+  RemoveTask(usize),
+}
+
 impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
-    let tray_icon = TrayIconBuilder::new()
-      .with_menu(Box::new(new_tray_menu()))
-      .with_tooltip("BzDownloader")
-      // .with_icon(icon)
-      .build()
-      .unwrap();
+    let tray_state = tray::init_tray_icon();
     (
-      Self {
-        is_loading: true,
-        tray_icon: Some(tray_icon),
-        state: AppState::default(),
-      },
+      Self::Loading(tray_state),
       Command::perform(load_data(), Message::Loaded),
     )
   }
 
   fn update(&mut self, message: Message) -> Command<Message> {
-    match message {
-      Message::Loaded(s) => {
-        println!("Loaded");
-        println!("msg from load_data: {}", s);
-        self.is_loading = false;
-        Command::none()
-      }
-      Message::TrayIconEvent => {
-        println!("TrayIconEvent in App ");
-        Command::none()
-      }
-      Message::WindowCloseRequest => {
-        println!("WindowClose in App");
+    match self {
+      BzDownloader::Loading(tray_state) => match message {
+        Message::Loaded(s) => {
+          println!("Loaded");
+          println!("msg from load_data: {}", s);
+          let app_state = AppState {
+            tray_state: tray_state.clone(),
+            tasks: vec![],
+          };
+          *self = BzDownloader::Loaded(app_state);
+          Command::none()
+        }
 
-        window::get_latest().and_then(window::close)
-      }
-      Message::AddTask(url) => {
-        println!("Downloading: {}", url);
-        Command::none()
-      }
-      Message::ToggleFullscreen(mode) => {
-        println!("ToggleFullscreen: {:?}", mode);
-        Command::none()
-      }
-      _ => Command::none(),
+        _ => Command::none(),
+      },
+      BzDownloader::Loaded(app_state) => match message {
+        Message::TrayMenuEvent(event) => {
+          let menu_type = app_state.tray_state.menuids.get_type(&event.id);
+          let cmd = match menu_type {
+            BzMenuType::Display => {
+              println!("TrayMenuEvent: Display");
+              window::get_latest()
+                .and_then(|window| window::change_mode(window, Mode::Windowed))
+            }
+            BzMenuType::Hide => {
+              println!("TrayMenuEvent: Hide");
+              window::get_latest()
+                .and_then(|window| window::change_mode(window, Mode::Hidden))
+            }
+            BzMenuType::Exit => {
+              println!("TrayMenuEvent: Exit");
+              window::get_latest().and_then(window::close)
+            }
+            _ => Command::none(),
+          };
+          cmd
+        }
+        Message::WindowCloseRequest => {
+          println!("WindowClose in App ");
+          window::get_latest()
+            .and_then(|window| window::change_mode(window, Mode::Hidden))
+        }
+
+        Message::ToggleFullscreen(mode) => {
+          println!("ToggleFullscreen: {:?}", mode);
+          Command::none()
+        }
+        _ => Command::none(),
+      },
     }
   }
 
   fn view(&self) -> Element<Message> {
-    match self.is_loading {
-      true => Element::new(Text::new("Loading...")),
-      false => Element::new(Text::new("Loaded...")),
+    match self {
+      BzDownloader::Loading(_) => Element::new(Text::new("Loading...")),
+      BzDownloader::Loaded(_) => Element::new(Text::new("Loaded...")),
     }
   }
 
@@ -168,7 +150,7 @@ impl BzDownloader {
         _ => None,
       }
     });
-    let tray_subscription = Subscription::run(trayicon);
+    let tray_subscription = Subscription::run(tray::tray_subscription);
     let window_close_requests = window::close_requests().map(|id| {
       println!("WindowClose in window_close_requests");
       Message::WindowCloseRequest
@@ -185,21 +167,4 @@ impl BzDownloader {
 async fn load_data() -> String {
   async_std::task::sleep(Duration::from_secs(2)).await;
   return "load_data finish".to_string();
-}
-
-fn trayicon() -> impl Stream<Item = Message> {
-  stream::channel(100, |mut output| async move {
-    loop {
-      if let Ok(event) = tray_icon::TrayIconEvent::receiver().try_recv() {
-        match event {
-          tray_icon::TrayIconEvent::Click { .. } => {
-            println!("TrayIconEvent: click",);
-            let r = output.send(Message::TrayIconEvent).await.unwrap();
-          }
-          _ => {}
-        };
-      }
-      async_std::task::sleep(Duration::from_millis(100)).await;
-    }
-  })
 }
