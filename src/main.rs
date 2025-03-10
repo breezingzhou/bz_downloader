@@ -3,10 +3,12 @@ use iced::{
   widget::Text,
   window::{self, Mode},
 };
-use std::{sync::Arc, time::Duration};
+use std::{env::set_var, sync::Arc, time::Duration};
 use tray::BzMenuType;
 use tray_icon::{TrayIcon, menu::MenuEvent};
 
+mod bz_task;
+mod m3u8;
 mod tray;
 
 pub fn main() -> iced::Result {
@@ -25,43 +27,20 @@ enum BzDownloader {
   Loaded(AppState),
 }
 
-#[derive(Debug)]
-enum TaskStatus {
-  Queued,
-  Downloading,
-  Paused,
-  Completed,
-  Failed,
-}
-
-#[derive(Debug)]
-struct DownloadTask {
-  url: String,
-  progress: f32,
-  status: TaskStatus,
-}
-
 struct AppState {
   tray_state: tray::TrayState,
-  tasks: Vec<DownloadTask>,
+  tasks: Vec<bz_task::BzTaskInfo>,
 }
 
 #[derive(Debug)]
 enum Message {
   Loaded(String),
   TrayMenuEvent(MenuEvent),
-  BzTask(BzTaskMessage),
+  BzTask(bz_task::BzTaskMessage),
   WindowCloseRequest,
   ToggleFullscreen(window::Mode),
 }
 
-#[derive(Debug)]
-enum BzTaskMessage {
-  AddTask(String),
-  PauseTask(usize),
-  RestartTask(usize),
-  RemoveTask(usize),
-}
 
 impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
