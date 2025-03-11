@@ -1,6 +1,6 @@
 use iced::{
-  Element, Subscription, Task as Command, keyboard,
-  widget::Text,
+  Element, Font, Subscription, Task as Command, keyboard,
+  widget::{Text, column, horizontal_rule},
   window::{self, Mode},
 };
 use std::{env::set_var, sync::Arc, time::Duration};
@@ -10,9 +10,12 @@ use tray_icon::{TrayIcon, menu::MenuEvent};
 mod bz_task;
 mod m3u8;
 mod tray;
+mod view;
 
 pub fn main() -> iced::Result {
-  env_logger::init();
+  env_logger::Builder::new()
+    .filter_module("bz_downloader", log::LevelFilter::Debug)
+    .init();
 
   iced::application("BzDownloader", BzDownloader::update, BzDownloader::view)
     .subscription(BzDownloader::subscription)
@@ -32,7 +35,7 @@ struct AppState {
   tasks: Vec<bz_task::BzTaskInfo>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Message {
   Loaded(String),
   TrayMenuEvent(MenuEvent),
@@ -40,7 +43,6 @@ enum Message {
   WindowCloseRequest,
   ToggleFullscreen(window::Mode),
 }
-
 
 impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
@@ -55,8 +57,8 @@ impl BzDownloader {
     match self {
       BzDownloader::Loading(tray_state) => match message {
         Message::Loaded(s) => {
-          println!("Loaded");
-          println!("msg from load_data: {}", s);
+          log::debug!("Loaded");
+          log::debug!("msg from load_data: {}", s);
           let app_state = AppState {
             tray_state: tray_state.clone(),
             tasks: vec![],
@@ -67,47 +69,72 @@ impl BzDownloader {
 
         _ => Command::none(),
       },
-      BzDownloader::Loaded(app_state) => match message {
-        Message::TrayMenuEvent(event) => {
-          let menu_type = app_state.tray_state.menuids.get_type(&event.id);
-          let cmd = match menu_type {
-            BzMenuType::Display => {
-              println!("TrayMenuEvent: Display");
-              window::get_latest()
-                .and_then(|window| window::change_mode(window, Mode::Windowed))
-            }
-            BzMenuType::Hide => {
-              println!("TrayMenuEvent: Hide");
-              window::get_latest()
-                .and_then(|window| window::change_mode(window, Mode::Hidden))
-            }
-            BzMenuType::Exit => {
-              println!("TrayMenuEvent: Exit");
-              window::get_latest().and_then(window::close)
-            }
-            _ => Command::none(),
-          };
-          cmd
-        }
-        Message::WindowCloseRequest => {
-          println!("WindowClose in App ");
-          window::get_latest()
-            .and_then(|window| window::change_mode(window, Mode::Hidden))
-        }
+      BzDownloader::Loaded(app_state) => {
+        log::debug!("Message in update : {:?}", message);
 
-        Message::ToggleFullscreen(mode) => {
-          println!("ToggleFullscreen: {:?}", mode);
-          Command::none()
+        match message {
+          Message::TrayMenuEvent(event) => {
+            let menu_type = app_state.tray_state.menuids.get_type(&event.id);
+            let cmd = match menu_type {
+              BzMenuType::Display => {
+                log::debug!("TrayMenuEvent: Display");
+                window::get_latest().and_then(|window| {
+                  window::change_mode(window, Mode::Windowed)
+                })
+              }
+              BzMenuType::Hide => {
+                log::debug!("TrayMenuEvent: Hide");
+                window::get_latest()
+                  .and_then(|window| window::change_mode(window, Mode::Hidden))
+              }
+              BzMenuType::Exit => {
+                log::debug!("TrayMenuEvent: Exit");
+                window::get_latest().and_then(window::close)
+              }
+              _ => Command::none(),
+            };
+            cmd
+          }
+          Message::WindowCloseRequest => {
+            log::debug!("WindowClose in App ");
+            window::get_latest()
+              .and_then(|window| window::change_mode(window, Mode::Hidden))
+          }
+          Message::ToggleFullscreen(mode) => {
+            log::debug!("ToggleFullscreen: {:?}", mode);
+            Command::none()
+          }
+          Message::BzTask(task_meaasge) => {
+            log::debug!("BzTaskMessage: {:?}", task_meaasge);
+            match task_meaasge {
+              bz_task::BzTaskMessage::AddTask(url) => {
+                log::debug!("AddTask: {:?}", url);
+                app_state.tasks.push(bz_task::BzTaskInfo {
+                  src: url.parse().unwrap(),
+                  dest: "./tmp/1.mp4".into(),
+                  temp: "./tmp/cache".into(),
+                  status: bz_task::TaskStatus::Queued,
+                });
+              }
+              _ => {}
+            }
+            Command::none()
+          }
+          _ => Command::none(),
         }
-        _ => Command::none(),
-      },
+      }
     }
   }
 
   fn view(&self) -> Element<Message> {
     match self {
       BzDownloader::Loading(_) => Element::new(Text::new("Loading...")),
-      BzDownloader::Loaded(_) => Element::new(Text::new("Loaded...")),
+      BzDownloader::Loaded(app_state) => {
+        let header = self.view_header();
+        let h = horizontal_rule(5);
+        let body = self.view_body(app_state);
+        column![header, h, body].spacing(10).padding(30).into()
+      }
     }
   }
 
@@ -131,7 +158,7 @@ impl BzDownloader {
     });
     let tray_subscription = Subscription::run(tray::tray_subscription);
     let window_close_requests = window::close_requests().map(|id| {
-      println!("WindowClose in window_close_requests");
+      log::debug!("WindowClose in window_close_requests");
       Message::WindowCloseRequest
     });
 

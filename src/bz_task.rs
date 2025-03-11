@@ -47,7 +47,7 @@ pub trait Task {
 // 这里是想要抽象一个下载任务 可以支持不同的下载任务 比如m3u8 torrent?等
 // 先跟m3u8的任务混一下
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BzTaskMessage {
   AddTask(String),
   PauseTask(usize),
