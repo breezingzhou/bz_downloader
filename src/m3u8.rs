@@ -7,9 +7,10 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use crate::bz_task::{
-  BzTaskControlMessage, BzTaskFeedBackMessage, BzTaskInfo, Task,
-  TaskInnerStatus, TaskProgress,
+  BzTaskControl, BzTaskFeedBack, BzTaskInfo, Control, TaskInnerStatus,
 };
+use crate::bz_task::{Task, TaskProgress};
+
 pub struct M3u8TaskProgress {
   pub save_file: PathBuf,
   pub downloaded: HashSet<String>,
@@ -96,7 +97,7 @@ impl M3u8Task {
   pub fn new(task_info: &BzTaskInfo) -> Self {
     Self {
       task_info: task_info.clone(),
-      porgress: M3u8TaskProgress::new(&task_info.temp),
+      porgress: M3u8TaskProgress::new(&task_info.cache),
       uris: Vec::new(),
     }
   }
@@ -105,7 +106,7 @@ impl M3u8Task {
   // 如果本地有索引文件则返回本地索引文件
   // 否则下载并且返回
   async fn get_m3u8_index(&self) -> Vec<u8> {
-    let index_file = PathBuf::from(&self.task_info.temp).join("index.m3u8");
+    let index_file = PathBuf::from(&self.task_info.cache).join("index.m3u8");
     if index_file.exists() {
       let content = std::fs::read(index_file).unwrap();
       return content;
@@ -150,8 +151,8 @@ impl Task for M3u8Task {
 
   async fn start(
     &mut self,
-    mut control_receiver: tokio::sync::mpsc::Receiver<BzTaskControlMessage>,
-    feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBackMessage>,
+    mut control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
+    feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
   ) {
     // 下载ts文件
     // 更新下载进度
@@ -163,15 +164,15 @@ impl Task for M3u8Task {
       }
       if let Ok(control_message) = control_receiver.try_recv() {
         status = match control_message.control {
-          crate::bz_task::Control::Pause => {
+          Control::Pause => {
             log::info!("task paused");
             TaskInnerStatus::Paused
           }
-          crate::bz_task::Control::Restart => {
+          Control::Restart => {
             log::info!("task restarted");
             TaskInnerStatus::Paused
           }
-          crate::bz_task::Control::Stop => {
+          Control::Stop => {
             log::info!("task stopped");
             TaskInnerStatus::Stopped
           }
@@ -190,7 +191,7 @@ impl Task for M3u8Task {
       }
 
       let uri = self.porgress.todos.pop().unwrap();
-      let file_path = self.task_info.temp.clone().join(&uri);
+      let file_path = self.task_info.cache.clone().join(&uri);
       let url = self.task_info.src.clone().join(&uri).unwrap();
       let content =
         client.get(url).send().await.unwrap().bytes().await.unwrap();
@@ -199,7 +200,7 @@ impl Task for M3u8Task {
       file.write(&content).await.unwrap();
       self.porgress.update(M3u8TaskProgressMessage::Add(uri));
       let _ = feedback_sender
-        .send(BzTaskFeedBackMessage {
+        .send(BzTaskFeedBack {
           id: 0,
           progress: self.porgress.rate(),
         })
@@ -211,16 +212,18 @@ impl Task for M3u8Task {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::bz_task::TaskStatus;
+  use crate::bz_task::{BzTaskType, TaskStatus};
   use tokio;
 
   #[tokio::test]
   async fn test_m3u8_task() {
     env_logger::init();
     let task_info = BzTaskInfo {
+      id: 0,
       src: reqwest::Url::parse("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8").unwrap(),
       dest: PathBuf::from("./tmp"),
-      temp: PathBuf::from("./tmp"),
+      cache: PathBuf::from("./tmp"),
+      kind: BzTaskType::M3u8,
       status: TaskStatus::Queued,
     };
     let mut task = M3u8Task::new(&task_info);

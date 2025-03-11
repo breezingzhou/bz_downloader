@@ -1,17 +1,21 @@
+mod bz_task;
+mod error;
+mod m3u8;
+mod tray;
+mod view;
+mod zfs;
+
+use bz_task::BzTaskMessage;
+use bz_task::{BzTaskFeedBack, BzTaskInfo, BzTaskType, TaskStatus};
+use error::BzError;
 use iced::{
   Element, Font, Subscription, Task as Command, keyboard,
   widget::{Text, column, horizontal_rule},
   window::{self, Mode},
 };
-use std::{env::set_var, sync::Arc, time::Duration};
+use std::time::Duration;
 use tray::BzMenuType;
 use tray_icon::{TrayIcon, menu::MenuEvent};
-
-mod bz_task;
-mod m3u8;
-mod tray;
-mod view;
-mod zfs;
 
 pub fn main() -> iced::Result {
   env_logger::Builder::new()
@@ -28,16 +32,16 @@ pub fn main() -> iced::Result {
 enum BzDownloader {
   // 加载历史下载任务
   // 等待FeedbackChannelCreated消息  用于接受任务下载时候反馈的信息
-  Loading(AppPreState),
-
-  Loaded(AppState),
+  Initializing(AppPreState),
+  // 正常运行
+  Running(AppState),
 }
 
+#[derive(Clone)]
 pub struct AppPreState {
   tray_state: tray::TrayState,
-  tasks: Option<Vec<bz_task::BzTaskInfo>>,
-  feedback_sender:
-    Option<tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>>,
+  tasks: Option<Vec<BzTaskInfo>>,
+  feedback_sender: Option<tokio::sync::mpsc::Sender<BzTaskFeedBack>>,
 }
 
 impl AppPreState {
@@ -48,41 +52,38 @@ impl AppPreState {
 
 struct AppState {
   tray_state: tray::TrayState,
-  tasks: Vec<bz_task::BzTaskInfo>,
-  feedback_sender: tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>,
+  tasks: Vec<BzTaskInfo>,
+  feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
 }
 
-impl From<&mut AppPreState> for AppState {
-  fn from(app_pre_state: &mut AppPreState) -> Self {
+impl From<AppPreState> for AppState {
+  fn from(app_pre_state: AppPreState) -> Self {
     Self {
-      tray_state: app_pre_state.tray_state.clone(),
-      tasks: app_pre_state.tasks.clone().unwrap(),
-      feedback_sender: app_pre_state.feedback_sender.clone().unwrap(),
+      tray_state: app_pre_state.tray_state,
+      tasks: app_pre_state.tasks.unwrap(),
+      feedback_sender: app_pre_state.feedback_sender.unwrap(),
     }
   }
 }
 
 #[derive(Debug, Clone)]
 enum Message {
-  // Tniting
+  // Initializing
   Loaded(String),
-  FeedbackChannelCreated(
-    tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>,
-  ),
+  FeedbackChannelCreated(tokio::sync::mpsc::Sender<BzTaskFeedBack>),
 
-  // Inited
+  // Running
   TrayMenuEvent(MenuEvent),
-  TaskFeedBack(bz_task::BzTaskFeedBackMessage),
-  BzTask(bz_task::BzTaskMessage),
+  TaskFeedBack(BzTaskFeedBack),
+  BzTask(BzTaskMessage),
   WindowCloseRequest,
-  ToggleFullscreen(window::Mode),
 }
 
 impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
     let tray_state = tray::init_tray_icon();
     (
-      Self::Loading(AppPreState {
+      Self::Initializing(AppPreState {
         tray_state,
         tasks: None,
         feedback_sender: None,
@@ -93,26 +94,34 @@ impl BzDownloader {
 
   fn update(&mut self, message: Message) -> Command<Message> {
     match self {
-      BzDownloader::Loading(app_pre_state) => match message {
-        Message::Loaded(s) => {
-          log::debug!("Loaded");
-          app_pre_state.tasks = Some(Vec::new());
-          if app_pre_state.is_ready() {
-            *self = BzDownloader::Loaded(AppState::from(app_pre_state));
+      BzDownloader::Initializing(app_pre_state) => {
+        match message {
+          Message::Loaded(s) => {
+            log::debug!("Loaded");
+            app_pre_state.tasks = Some(Vec::new());
+            if app_pre_state.is_ready() {
+              *self =
+                BzDownloader::Running(AppState::from(app_pre_state.clone()));
+            }
           }
-          Command::none()
-        }
-        Message::FeedbackChannelCreated(sender) => {
-          log::debug!("FeedbackChannelCreated");
-          app_pre_state.feedback_sender = Some(sender);
-          if app_pre_state.is_ready() {
-            *self = BzDownloader::Loaded(AppState::from(app_pre_state));
+          Message::FeedbackChannelCreated(sender) => {
+            log::debug!("FeedbackChannelCreated");
+            app_pre_state.feedback_sender = Some(sender);
+            if app_pre_state.is_ready() {
+              *self =
+                BzDownloader::Running(AppState::from(app_pre_state.clone()));
+            }
           }
-          Command::none()
+          _ => {
+            log::error!(
+              "Unexpected Message in state BzDownloader::Loading : {:?}",
+              message
+            );
+          }
         }
-        _ => Command::none(),
-      },
-      BzDownloader::Loaded(app_state) => {
+        Command::none()
+      }
+      BzDownloader::Running(app_state) => {
         log::debug!("Message in update : {:?}", message);
 
         match message {
@@ -139,24 +148,23 @@ impl BzDownloader {
             cmd
           }
           Message::WindowCloseRequest => {
-            log::debug!("WindowClose in App ");
+            log::debug!("WindowCloseRequest in App. Just Hide Window");
             window::get_latest()
               .and_then(|window| window::change_mode(window, Mode::Hidden))
           }
-          Message::ToggleFullscreen(mode) => {
-            log::debug!("ToggleFullscreen: {:?}", mode);
-            Command::none()
-          }
+
           Message::BzTask(task_meaasge) => {
             log::debug!("BzTaskMessage: {:?}", task_meaasge);
             match task_meaasge {
               bz_task::BzTaskMessage::AddTask(url) => {
                 log::debug!("AddTask: {:?}", url);
-                let task_info = bz_task::BzTaskInfo {
+                let task_info = BzTaskInfo {
+                  id: 0,
                   src: url.parse().unwrap(),
                   dest: "./tmp/1.mp4".into(),
-                  temp: "./tmp/cache".into(),
-                  status: bz_task::TaskStatus::Queued,
+                  cache: "./tmp/cache".into(),
+                  kind: BzTaskType::Zfs,
+                  status: TaskStatus::Queued,
                 };
                 app_state.tasks.push(task_info.clone());
                 bz_task::run_task(task_info, app_state.feedback_sender.clone());
@@ -167,8 +175,7 @@ impl BzDownloader {
           }
           Message::TaskFeedBack(feedback_message) => {
             let progress = feedback_message.progress;
-            app_state.tasks[0].status =
-              bz_task::TaskStatus::Downloading(progress);
+            app_state.tasks[0].status = TaskStatus::Downloading;
             Command::none()
           }
           _ => Command::none(),
@@ -179,8 +186,8 @@ impl BzDownloader {
 
   fn view(&self) -> Element<Message> {
     match self {
-      BzDownloader::Loading(_) => Element::new(Text::new("Loading...")),
-      BzDownloader::Loaded(app_state) => {
+      BzDownloader::Initializing(_) => Element::new(Text::new("Loading...")),
+      BzDownloader::Running(app_state) => {
         let header = self.view_header();
         let h = horizontal_rule(5);
         let body = self.view_body(app_state);
@@ -190,23 +197,6 @@ impl BzDownloader {
   }
 
   fn subscription(&self) -> Subscription<Message> {
-    use keyboard::key;
-
-    let keyboard_subscription = keyboard::on_key_press(|key, modifiers| {
-      let keyboard::Key::Named(key) = key else {
-        return None;
-      };
-
-      match (key, modifiers) {
-        (key::Named::ArrowUp, keyboard::Modifiers::SHIFT) => {
-          Some(Message::ToggleFullscreen(window::Mode::Fullscreen))
-        }
-        (key::Named::ArrowDown, keyboard::Modifiers::SHIFT) => {
-          Some(Message::ToggleFullscreen(window::Mode::Windowed))
-        }
-        _ => None,
-      }
-    });
     let tray_subscription = Subscription::run(tray::tray_subscription);
     let window_close_requests = window::close_requests().map(|id| {
       log::debug!("WindowClose in window_close_requests");
@@ -217,7 +207,6 @@ impl BzDownloader {
       Subscription::run(bz_task::feed_back_subscription);
 
     Subscription::batch(vec![
-      keyboard_subscription,
       tray_subscription,
       window_close_requests,
       task_feedback_subscription,

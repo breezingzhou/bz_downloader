@@ -1,11 +1,14 @@
 use iced::widget::{button, column, row, text, vertical_rule};
 
-use crate::{AppState, Message, bz_task};
+use crate::{
+  AppState, Message,
+  bz_task::{self, BzTaskInfo, BzTaskMessage},
+};
 
 impl crate::BzDownloader {
   pub fn view_header(&self) -> iced::Element<Message> {
     let message =
-      Message::BzTask(bz_task::BzTaskMessage::AddTask("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8".to_string()));
+      Message::BzTask(BzTaskMessage::AddTask("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8".to_string()));
     let button = button("+").on_press(message);
     row![button].into()
   }
@@ -27,9 +30,7 @@ impl crate::BzDownloader {
     tasks.into()
   }
 
-  pub fn view_task(
-    &self, task: &bz_task::BzTaskInfo,
-  ) -> iced::Element<Message> {
+  pub fn view_task(&self, task: &BzTaskInfo) -> iced::Element<Message> {
     let name = task.dest.file_name().unwrap().to_str().unwrap();
     let display_name = text!("{name}");
 
