@@ -6,7 +6,10 @@ use std::{collections::HashSet, time::Duration};
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::bz_task::{BzTaskControlMessage, BzTaskInfo, Task, TaskProgress};
+use crate::bz_task::{
+  BzTaskControlMessage, BzTaskFeedBackMessage, BzTaskInfo, Task,
+  TaskInnerStatus, TaskProgress,
+};
 pub struct M3u8TaskProgress {
   pub save_file: PathBuf,
   pub downloaded: HashSet<String>,
@@ -145,14 +148,47 @@ impl Task for M3u8Task {
     self.uris = ts_files;
   }
 
-  async fn start(&mut self) {
+  async fn start(
+    &mut self,
+    mut control_receiver: tokio::sync::mpsc::Receiver<BzTaskControlMessage>,
+    feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBackMessage>,
+  ) {
     // 下载ts文件
     // 更新下载进度
     let client = reqwest::Client::new();
+    let mut status = TaskInnerStatus::Started;
     loop {
       if self.porgress.todos.is_empty() {
         break;
       }
+      if let Ok(control_message) = control_receiver.try_recv() {
+        status = match control_message.control {
+          crate::bz_task::Control::Pause => {
+            log::info!("task paused");
+            TaskInnerStatus::Paused
+          }
+          crate::bz_task::Control::Restart => {
+            log::info!("task restarted");
+            TaskInnerStatus::Paused
+          }
+          crate::bz_task::Control::Stop => {
+            log::info!("task stopped");
+            TaskInnerStatus::Stopped
+          }
+        }
+      }
+
+      match status {
+        TaskInnerStatus::Paused => {
+          tokio::time::sleep(Duration::from_secs(1)).await;
+          continue;
+        }
+        TaskInnerStatus::Stopped => {
+          break;
+        }
+        _ => {}
+      }
+
       let uri = self.porgress.todos.pop().unwrap();
       let file_path = self.task_info.temp.clone().join(&uri);
       let url = self.task_info.src.clone().join(&uri).unwrap();
@@ -162,6 +198,12 @@ impl Task for M3u8Task {
       let mut file = fs::File::create(file_path).await.unwrap();
       file.write(&content).await.unwrap();
       self.porgress.update(M3u8TaskProgressMessage::Add(uri));
+      let _ = feedback_sender
+        .send(BzTaskFeedBackMessage {
+          id: 0,
+          progress: self.porgress.rate(),
+        })
+        .await;
     }
   }
 }
@@ -182,7 +224,5 @@ mod tests {
       status: TaskStatus::Queued,
     };
     let mut task = M3u8Task::new(&task_info);
-    task.prepare().await;
-    task.start().await;
   }
 }

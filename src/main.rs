@@ -11,6 +11,7 @@ mod bz_task;
 mod m3u8;
 mod tray;
 mod view;
+mod zfs;
 
 pub fn main() -> iced::Result {
   env_logger::Builder::new()
@@ -25,20 +26,53 @@ pub fn main() -> iced::Result {
 }
 
 enum BzDownloader {
-  Loading(tray::TrayState),
+  // 加载历史下载任务
+  // 等待FeedbackChannelCreated消息  用于接受任务下载时候反馈的信息
+  Loading(AppPreState),
 
   Loaded(AppState),
+}
+
+pub struct AppPreState {
+  tray_state: tray::TrayState,
+  tasks: Option<Vec<bz_task::BzTaskInfo>>,
+  feedback_sender:
+    Option<tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>>,
+}
+
+impl AppPreState {
+  pub fn is_ready(&self) -> bool {
+    self.tasks.is_some() && self.feedback_sender.is_some()
+  }
 }
 
 struct AppState {
   tray_state: tray::TrayState,
   tasks: Vec<bz_task::BzTaskInfo>,
+  feedback_sender: tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>,
+}
+
+impl From<&mut AppPreState> for AppState {
+  fn from(app_pre_state: &mut AppPreState) -> Self {
+    Self {
+      tray_state: app_pre_state.tray_state.clone(),
+      tasks: app_pre_state.tasks.clone().unwrap(),
+      feedback_sender: app_pre_state.feedback_sender.clone().unwrap(),
+    }
+  }
 }
 
 #[derive(Debug, Clone)]
 enum Message {
+  // Tniting
   Loaded(String),
+  FeedbackChannelCreated(
+    tokio::sync::mpsc::Sender<bz_task::BzTaskFeedBackMessage>,
+  ),
+
+  // Inited
   TrayMenuEvent(MenuEvent),
+  TaskFeedBack(bz_task::BzTaskFeedBackMessage),
   BzTask(bz_task::BzTaskMessage),
   WindowCloseRequest,
   ToggleFullscreen(window::Mode),
@@ -48,25 +82,34 @@ impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
     let tray_state = tray::init_tray_icon();
     (
-      Self::Loading(tray_state),
+      Self::Loading(AppPreState {
+        tray_state,
+        tasks: None,
+        feedback_sender: None,
+      }),
       Command::perform(load_data(), Message::Loaded),
     )
   }
 
   fn update(&mut self, message: Message) -> Command<Message> {
     match self {
-      BzDownloader::Loading(tray_state) => match message {
+      BzDownloader::Loading(app_pre_state) => match message {
         Message::Loaded(s) => {
           log::debug!("Loaded");
-          log::debug!("msg from load_data: {}", s);
-          let app_state = AppState {
-            tray_state: tray_state.clone(),
-            tasks: vec![],
-          };
-          *self = BzDownloader::Loaded(app_state);
+          app_pre_state.tasks = Some(Vec::new());
+          if app_pre_state.is_ready() {
+            *self = BzDownloader::Loaded(AppState::from(app_pre_state));
+          }
           Command::none()
         }
-
+        Message::FeedbackChannelCreated(sender) => {
+          log::debug!("FeedbackChannelCreated");
+          app_pre_state.feedback_sender = Some(sender);
+          if app_pre_state.is_ready() {
+            *self = BzDownloader::Loaded(AppState::from(app_pre_state));
+          }
+          Command::none()
+        }
         _ => Command::none(),
       },
       BzDownloader::Loaded(app_state) => {
@@ -109,15 +152,23 @@ impl BzDownloader {
             match task_meaasge {
               bz_task::BzTaskMessage::AddTask(url) => {
                 log::debug!("AddTask: {:?}", url);
-                app_state.tasks.push(bz_task::BzTaskInfo {
+                let task_info = bz_task::BzTaskInfo {
                   src: url.parse().unwrap(),
                   dest: "./tmp/1.mp4".into(),
                   temp: "./tmp/cache".into(),
                   status: bz_task::TaskStatus::Queued,
-                });
+                };
+                app_state.tasks.push(task_info.clone());
+                bz_task::run_task(task_info, app_state.feedback_sender.clone());
               }
               _ => {}
             }
+            Command::none()
+          }
+          Message::TaskFeedBack(feedback_message) => {
+            let progress = feedback_message.progress;
+            app_state.tasks[0].status =
+              bz_task::TaskStatus::Downloading(progress);
             Command::none()
           }
           _ => Command::none(),
@@ -162,10 +213,14 @@ impl BzDownloader {
       Message::WindowCloseRequest
     });
 
+    let task_feedback_subscription =
+      Subscription::run(bz_task::feed_back_subscription);
+
     Subscription::batch(vec![
       keyboard_subscription,
       tray_subscription,
       window_close_requests,
+      task_feedback_subscription,
     ])
   }
 }

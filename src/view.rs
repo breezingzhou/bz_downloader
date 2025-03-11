@@ -32,10 +32,14 @@ impl crate::BzDownloader {
   ) -> iced::Element<Message> {
     let name = task.dest.file_name().unwrap().to_str().unwrap();
     let display_name = text!("{name}");
-    row![display_name].into()
+
+    let status_str = format!("{:?}", task.status);
+    let status = text!("{status_str}");
+    row![display_name, status].into()
   }
 
   pub fn view_filter(&self) -> iced::Element<Message> {
+    // TODO shaping(text::Shaping::Advanced) 是为了显示中文 可能有其他方案
     let button_all = button(text!("全部").shaping(text::Shaping::Advanced));
     let button_downloading =
       button(text!("进行中").shaping(text::Shaping::Advanced));

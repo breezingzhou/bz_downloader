@@ -1,0 +1,92 @@
+use std::time::Duration;
+
+use crate::bz_task::{BzTaskInfo, Task, TaskProgress};
+
+pub struct ZfsTaskProgress {
+  pub downloaded: Vec<String>,
+
+  pub todos: Vec<String>,
+  pub total: usize,
+}
+
+pub enum ZfsTaskProgressMessage {
+  Add(String),
+  Remove(String),
+}
+
+impl TaskProgress for ZfsTaskProgress {
+  type Message = ZfsTaskProgressMessage;
+
+  fn load(&mut self) {
+    ()
+  }
+
+  fn dump(&self) {
+    ()
+  }
+
+  fn _update(&mut self, message: Self::Message) {
+    match message {
+      ZfsTaskProgressMessage::Add(url) => {
+        self.downloaded.push(url);
+      }
+      ZfsTaskProgressMessage::Remove(url) => {}
+    }
+  }
+
+  fn rate(&self) -> f32 {
+    self.downloaded.len() as f32 / self.total as f32
+  }
+}
+
+pub struct ZfsTask {
+  task_info: BzTaskInfo,
+  porgress: ZfsTaskProgress,
+  uris: Vec<String>,
+}
+
+impl ZfsTask {
+  pub fn new(task_info: BzTaskInfo) -> Self {
+    Self {
+      task_info,
+      porgress: ZfsTaskProgress {
+        downloaded: vec![],
+        todos: vec![],
+        total: 10,
+      },
+      uris: vec![],
+    }
+  }
+}
+
+impl Task for ZfsTask {
+  type Progress = ZfsTaskProgress;
+
+  async fn prepare(&mut self) {}
+
+  async fn start(
+    &mut self,
+    control_receiver: tokio::sync::mpsc::Receiver<
+      crate::bz_task::BzTaskControlMessage,
+    >,
+    feedback_sender: tokio::sync::mpsc::Sender<
+      crate::bz_task::BzTaskFeedBackMessage,
+    >,
+  ) {
+    let mut i = 0;
+    loop {
+      if i == 10 {
+        break;
+      }
+
+      i = i + 1;
+      tokio::time::sleep(Duration::from_secs(2)).await;
+      let _ = feedback_sender
+        .send(crate::bz_task::BzTaskFeedBackMessage {
+          id: 0,
+          progress: (i as f32 / 10.0),
+        })
+        .await;
+    }
+  }
+}
