@@ -1,17 +1,14 @@
-mod task;
+mod id;
 mod info;
+mod task;
 
-pub use info::BzTaskControl;
-pub use info::BzTaskExtraInfo;
-pub use info::BzTaskFeedBack;
-pub use info::BzTaskInfo;
-pub use info::BzTaskType;
-pub use info::Control;
-pub use info::TaskInnerStatus;
-pub use info::TaskStatus;
+pub use info::{
+  BzTask, BzTaskControl, BzTaskExtraInfo, BzTaskFeedBack, BzTaskInfo,
+  BzTaskRuntimeInfo, BzTaskType, Control, TaskInnerStatus, BzTaskStatus,
+};
 
-pub use task::BzTaskMessage;
-pub use task::Task;
-pub use task::TaskProgress;
-pub use task::feed_back_subscription;
-pub use task::run_task;
+pub use task::{
+  BzTaskMessage, Task, TaskProgress, feed_back_subscription, run_task,
+};
+
+pub use id::BzTaskId;

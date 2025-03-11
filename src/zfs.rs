@@ -1,9 +1,6 @@
 use std::time::Duration;
 
-use crate::{
-  bz_task::{BzTaskControl, BzTaskFeedBack, BzTaskInfo},
-  bz_task::{Task, TaskProgress},
-};
+use crate::bz_task::{BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Task, TaskProgress};
 
 pub struct ZfsTaskProgress {
   pub downloaded: Vec<String>,
@@ -68,7 +65,8 @@ impl Task for ZfsTask {
   async fn prepare(&mut self) {}
 
   async fn start(
-    &mut self, control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
+    &mut self, task_id: BzTaskId,
+    control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
     feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
   ) {
     let mut i = 0;
@@ -81,7 +79,7 @@ impl Task for ZfsTask {
       tokio::time::sleep(Duration::from_secs(2)).await;
       let _ = feedback_sender
         .send(BzTaskFeedBack {
-          id: 0,
+          task_id: task_id.clone(),
           progress: (i as f32 / 10.0),
         })
         .await;

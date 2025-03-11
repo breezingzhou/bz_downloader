@@ -7,7 +7,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use crate::bz_task::{
-  BzTaskControl, BzTaskFeedBack, BzTaskInfo, Control, TaskInnerStatus,
+  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Control, TaskInnerStatus
 };
 use crate::bz_task::{Task, TaskProgress};
 
@@ -150,7 +150,7 @@ impl Task for M3u8Task {
   }
 
   async fn start(
-    &mut self,
+    &mut self, task_id: BzTaskId,
     mut control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
     feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
   ) {
@@ -201,7 +201,7 @@ impl Task for M3u8Task {
       self.porgress.update(M3u8TaskProgressMessage::Add(uri));
       let _ = feedback_sender
         .send(BzTaskFeedBack {
-          id: 0,
+          task_id,
           progress: self.porgress.rate(),
         })
         .await;
@@ -212,19 +212,18 @@ impl Task for M3u8Task {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::bz_task::{BzTaskType, TaskStatus};
+  use crate::bz_task::{BzTaskId, BzTaskStatus, BzTaskType};
   use tokio;
 
   #[tokio::test]
   async fn test_m3u8_task() {
     env_logger::init();
     let task_info = BzTaskInfo {
-      id: 0,
       src: reqwest::Url::parse("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8").unwrap(),
       dest: PathBuf::from("./tmp"),
       cache: PathBuf::from("./tmp"),
       kind: BzTaskType::M3u8,
-      status: TaskStatus::Queued,
+      status: BzTaskStatus::Queued,
     };
     let mut task = M3u8Task::new(&task_info);
   }

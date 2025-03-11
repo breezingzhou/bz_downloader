@@ -1,14 +1,23 @@
 use iced::widget::{button, column, row, text, vertical_rule};
+use reqwest::Url;
 
 use crate::{
   AppState, Message,
-  bz_task::{self, BzTaskInfo, BzTaskMessage},
+  bz_task::{
+    self, BzTask, BzTaskInfo, BzTaskMessage, BzTaskStatus, BzTaskType,
+  },
 };
 
 impl crate::BzDownloader {
   pub fn view_header(&self) -> iced::Element<Message> {
-    let message =
-      Message::BzTask(BzTaskMessage::AddTask("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8".to_string()));
+    let task_info = BzTaskInfo {
+      src: Url::parse("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8").unwrap(),
+      dest: "./tmp/1.mp4".into(),
+        cache: "./tmp".into(),
+        kind: BzTaskType::M3u8,
+        status: BzTaskStatus::Queued,
+    };
+    let message = Message::BzTask(BzTaskMessage::AddTask(task_info));
     let button = button("+").on_press(message);
     row![button].into()
   }
@@ -22,21 +31,21 @@ impl crate::BzDownloader {
   }
 
   pub fn view_tasks(&self, app_state: &AppState) -> iced::Element<Message> {
-    let mut tasks = column![];
-    for task_info in app_state.tasks.iter() {
-      let task = self.view_task(task_info);
-      tasks = tasks.push(task);
+    let mut tasks_view = column![];
+    for task in app_state.tasks.values() {
+      let task_view = self.view_task(task);
+      tasks_view = tasks_view.push(task_view);
     }
-    tasks.into()
+    tasks_view.into()
   }
 
-  pub fn view_task(&self, task: &BzTaskInfo) -> iced::Element<Message> {
-    let name = task.dest.file_name().unwrap().to_str().unwrap();
-    let display_name = text!("{name}");
+  pub fn view_task(&self, task: &BzTask) -> iced::Element<Message> {
+    let name = task.info.dest.file_name().unwrap().to_str().unwrap();
+    let name_view = text!("{name}");
 
-    let status_str = format!("{:?}", task.status);
-    let status = text!("{status_str}");
-    row![display_name, status].into()
+    let status = format!("{:?}", task.info.status);
+    let status_view = text!("{status}");
+    row![name_view, status_view].into()
   }
 
   pub fn view_filter(&self) -> iced::Element<Message> {

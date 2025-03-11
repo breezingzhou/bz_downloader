@@ -5,14 +5,18 @@ mod tray;
 mod view;
 mod zfs;
 
-use bz_task::BzTaskMessage;
-use bz_task::{BzTaskFeedBack, BzTaskInfo, BzTaskType, TaskStatus};
+use bz_task::{
+  BzTask, BzTaskExtraInfo, BzTaskId, BzTaskMessage, BzTaskRuntimeInfo,
+};
+use bz_task::{BzTaskFeedBack, BzTaskInfo, BzTaskStatus, BzTaskType};
 use error::BzError;
 use iced::{
   Element, Font, Subscription, Task as Command, keyboard,
   widget::{Text, column, horizontal_rule},
   window::{self, Mode},
 };
+use std::collections::BTreeMap;
+use std::default;
 use std::time::Duration;
 use tray::BzMenuType;
 use tray_icon::{TrayIcon, menu::MenuEvent};
@@ -40,27 +44,41 @@ enum BzDownloader {
 #[derive(Clone)]
 pub struct AppPreState {
   tray_state: tray::TrayState,
-  tasks: Option<Vec<BzTaskInfo>>,
+  task_infos: Option<Vec<BzTaskInfo>>,
   feedback_sender: Option<tokio::sync::mpsc::Sender<BzTaskFeedBack>>,
 }
 
 impl AppPreState {
   pub fn is_ready(&self) -> bool {
-    self.tasks.is_some() && self.feedback_sender.is_some()
+    self.task_infos.is_some() && self.feedback_sender.is_some()
   }
 }
 
 struct AppState {
   tray_state: tray::TrayState,
-  tasks: Vec<BzTaskInfo>,
+  tasks: BTreeMap<BzTaskId, BzTask>,
   feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
 }
 
 impl From<AppPreState> for AppState {
   fn from(app_pre_state: AppPreState) -> Self {
+    let task_infos = app_pre_state.task_infos.unwrap();
+    let tasks = task_infos
+      .iter()
+      .map(|task_info| {
+        let id = BzTaskId::unique();
+        let task = BzTask {
+          id: id.clone(),
+          info: task_info.clone(),
+          extra: BzTaskExtraInfo::default(),
+          runtime: BzTaskRuntimeInfo::default(),
+        };
+        (id, task)
+      })
+      .collect();
     Self {
       tray_state: app_pre_state.tray_state,
-      tasks: app_pre_state.tasks.unwrap(),
+      tasks: tasks,
       feedback_sender: app_pre_state.feedback_sender.unwrap(),
     }
   }
@@ -69,7 +87,7 @@ impl From<AppPreState> for AppState {
 #[derive(Debug, Clone)]
 enum Message {
   // Initializing
-  Loaded(String),
+  Loaded(Vec<BzTaskInfo>),
   FeedbackChannelCreated(tokio::sync::mpsc::Sender<BzTaskFeedBack>),
 
   // Running
@@ -82,10 +100,11 @@ enum Message {
 impl BzDownloader {
   fn new() -> (Self, Command<Message>) {
     let tray_state = tray::init_tray_icon();
+    init_dirs();
     (
       Self::Initializing(AppPreState {
         tray_state,
-        tasks: None,
+        task_infos: None,
         feedback_sender: None,
       }),
       Command::perform(load_data(), Message::Loaded),
@@ -96,9 +115,9 @@ impl BzDownloader {
     match self {
       BzDownloader::Initializing(app_pre_state) => {
         match message {
-          Message::Loaded(s) => {
+          Message::Loaded(mut task_infos) => {
             log::debug!("Loaded");
-            app_pre_state.tasks = Some(Vec::new());
+            app_pre_state.task_infos = Some(task_infos);
             if app_pre_state.is_ready() {
               *self =
                 BzDownloader::Running(AppState::from(app_pre_state.clone()));
@@ -141,6 +160,10 @@ impl BzDownloader {
               }
               BzMenuType::Exit => {
                 log::debug!("TrayMenuEvent: Exit");
+                // 给每个worker发送退出消息
+                // 等待所有worker退出
+                // 退出前保存任务列表
+                save_data(&app_state.tasks);
                 window::get_latest().and_then(window::close)
               }
               _ => Command::none(),
@@ -156,26 +179,28 @@ impl BzDownloader {
           Message::BzTask(task_meaasge) => {
             log::debug!("BzTaskMessage: {:?}", task_meaasge);
             match task_meaasge {
-              bz_task::BzTaskMessage::AddTask(url) => {
-                log::debug!("AddTask: {:?}", url);
-                let task_info = BzTaskInfo {
-                  id: 0,
-                  src: url.parse().unwrap(),
-                  dest: "./tmp/1.mp4".into(),
-                  cache: "./tmp/cache".into(),
-                  kind: BzTaskType::Zfs,
-                  status: TaskStatus::Queued,
-                };
-                app_state.tasks.push(task_info.clone());
-                bz_task::run_task(task_info, app_state.feedback_sender.clone());
+              bz_task::BzTaskMessage::AddTask(task_info) => {
+                log::debug!("AddTask: {:?}", task_info);
+                let mut task = BzTask::from_info(task_info);
+                let control_sender = bz_task::run_task(
+                  task.id,
+                  task.info.clone(),
+                  app_state.feedback_sender.clone(),
+                );
+                task.runtime.sender = Some(control_sender);
+                app_state.tasks.insert(task.id, task);
               }
               _ => {}
             }
             Command::none()
           }
-          Message::TaskFeedBack(feedback_message) => {
-            let progress = feedback_message.progress;
-            app_state.tasks[0].status = TaskStatus::Downloading;
+          Message::TaskFeedBack(feedback) => {
+            let task_id = feedback.task_id;
+            let progress = feedback.progress;
+
+            app_state.tasks.get_mut(&task_id).map(|task| {
+              task.extra.progress = progress;
+            });
             Command::none()
           }
           _ => Command::none(),
@@ -214,7 +239,57 @@ impl BzDownloader {
   }
 }
 
-async fn load_data() -> String {
-  async_std::task::sleep(Duration::from_secs(2)).await;
-  return "load_data finish".to_string();
+use directories::ProjectDirs;
+
+fn App_Dir() -> ProjectDirs {
+  let app_dir = ProjectDirs::from("com", "breezing", "bz_downloader").unwrap();
+  return app_dir;
+}
+
+fn init_dirs() {
+  let app_dir = App_Dir();
+  let cache_dir = app_dir.cache_dir();
+  let data_dir = app_dir.data_dir();
+  log::debug!("cache_dir: {:?}", cache_dir);
+  log::debug!("data_dir: {:?}", data_dir);
+  if !cache_dir.exists() {
+    log::info!("cache_dir not exists");
+    log::info!("create cache_dir: {}", cache_dir.display());
+    std::fs::create_dir_all(cache_dir).unwrap();
+  }
+  if !data_dir.exists() {
+    log::info!("data_dir not exists");
+    log::info!("create data_dir: {}", data_dir.display());
+    std::fs::create_dir_all(data_dir).unwrap();
+  }
+}
+
+async fn load_data() -> Vec<BzTaskInfo> {
+  let task_list = App_Dir().data_dir().join("task_list.json");
+  if !task_list.exists() {
+    return Vec::new();
+  }
+  let task_infos: Vec<BzTaskInfo> =
+    serde_json::from_reader(std::fs::File::open(task_list).unwrap()).unwrap();
+  task_infos
+}
+
+async fn save_data(tasks: &BTreeMap<BzTaskId, BzTask>) {
+  let task_list = App_Dir().data_dir().join("task_list.json");
+  let task_infos: Vec<&BzTaskInfo> =
+    tasks.values().map(|task| &task.info).collect();
+  serde_json::to_writer(std::fs::File::create(task_list).unwrap(), &task_infos)
+    .unwrap();
+}
+
+#[cfg(test)]
+mod test {
+  use directories::ProjectDirs;
+
+  #[test]
+  fn test_dirs() {
+    let app_dir =
+      ProjectDirs::from("com", "breezing", "bz_downloader").unwrap();
+    println!("{:?}", app_dir);
+  }
 }

@@ -10,6 +10,8 @@ use crate::{
   zfs::ZfsTask,
 };
 
+use super::BzTaskId;
+
 // Task Progress
 
 pub trait TaskProgress {
@@ -28,14 +30,15 @@ pub trait Task {
   type Progress;
   async fn prepare(&mut self);
   async fn start(
-    &mut self, control_receiver: mpsc::Receiver<BzTaskControl>,
+    &mut self, task_id: BzTaskId,
+    control_receiver: mpsc::Receiver<BzTaskControl>,
     feedback_sender: mpsc::Sender<BzTaskFeedBack>,
   );
 }
 
 #[derive(Debug, Clone)]
 pub enum BzTaskMessage {
-  AddTask(String),
+  AddTask(BzTaskInfo),
   PauseTask(usize),
   RestartTask(usize),
   RemoveTask(usize),
@@ -43,13 +46,14 @@ pub enum BzTaskMessage {
 
 // 创建两个channel 一个用于发送控制信息 一个用于接受进度信息
 pub fn run_task(
-  task_info: BzTaskInfo, feedback_sender: mpsc::Sender<BzTaskFeedBack>,
+  task_id: BzTaskId, task_info: BzTaskInfo,
+  feedback_sender: mpsc::Sender<BzTaskFeedBack>,
 ) -> mpsc::Sender<BzTaskControl> {
   let (control_sender, control_receiver) = mpsc::channel::<BzTaskControl>(100);
   tokio::spawn(async move {
     let mut task = ZfsTask::new(task_info);
     task.prepare().await;
-    task.start(control_receiver, feedback_sender).await;
+    task.start(task_id, control_receiver, feedback_sender).await;
   });
   return control_sender;
 }
