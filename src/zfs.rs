@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use crate::bz_task::{
-  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Task, TaskProgress,
+  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo,
+  BzTaskInfoFeedBackMessage, Task, TaskProgress,
 };
 
 pub struct ZfsTaskProgress {
@@ -72,25 +73,25 @@ impl Task for ZfsTask {
     &mut self, task_id: BzTaskId,
     control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
     feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
-  ) {
+  ) -> bool {
     let mut i = 0;
     loop {
       if i == 10 {
-        break;
+        return true;
       }
 
       i = i + 1;
       tokio::time::sleep(Duration::from_secs(2)).await;
       let _ = feedback_sender
-        .send(BzTaskFeedBack {
+        .send(BzTaskFeedBack::TaskInfo(BzTaskInfoFeedBackMessage {
           task_id: task_id.clone(),
           progress: (i as f32 / 10.0),
-        })
+        }))
         .await;
     }
   }
 
   async fn finish(&mut self) {
-        todo!()
-    }
+    todo!()
+  }
 }

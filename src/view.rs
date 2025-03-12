@@ -1,4 +1,11 @@
-use iced::widget::{button, column, row, text, vertical_rule};
+use iced::{
+  Element,
+  Length::FillPortion,
+  widget::{
+    Container, Text, button, column, container, horizontal_rule, progress_bar,
+    row, text, vertical_rule,
+  },
+};
 use reqwest::Url;
 
 use crate::{
@@ -32,31 +39,75 @@ impl crate::BzDownloader {
 
   pub fn view_tasks(&self, app_state: &AppState) -> iced::Element<Message> {
     let mut tasks_view = column![];
+    let taskinfo_header = row![
+      text!("任务").width(FillPortion(3)),
+      vertical_rule(5),
+      text!("状态").width(FillPortion(1)),
+      vertical_rule(5),
+      text!("进度").width(FillPortion(1)),
+      vertical_rule(5),
+      text!("操作").width(FillPortion(3))
+    ];
+    tasks_view = tasks_view.push(taskinfo_header.height(iced::Length::Shrink));
+    tasks_view = tasks_view.push(horizontal_rule(5));
     for task in app_state.tasks.values() {
       let task_view = self.view_task(task);
       tasks_view = tasks_view.push(task_view);
+      tasks_view = tasks_view.push(horizontal_rule(5))
     }
     tasks_view.into()
   }
 
   pub fn view_task(&self, task: &BzTask) -> iced::Element<Message> {
     let name = task.info.dest.file_name().unwrap().to_str().unwrap();
-    let name_view = text!("{name}");
+    let name_view = text!("{name}").width(FillPortion(3));
 
-    let status = format!("{:?}", task.info.status);
-    let status_view = text!("{status}");
-    row![name_view, status_view].into()
+    let status = format!("{}", task.info.status);
+    let status_view = text!("{status}").width(FillPortion(1));
+
+    let progress_view =
+      progress_bar(0.0..=1.0, task.extra.progress).width(FillPortion(1));
+
+    let action_view = self.view_task_action(task).width(FillPortion(3));
+    row![
+      name_view,
+      vertical_rule(5),
+      status_view,
+      vertical_rule(5),
+      progress_view,
+      vertical_rule(5),
+      action_view
+    ]
+    .height(iced::Length::Shrink)
+    .into()
+  }
+
+  pub fn view_task_action(&self, task: &BzTask) -> Container<Message> {
+    let button_start = button(text!("开始"))
+      .on_press(Message::BzTask(BzTaskMessage::TryStartTask(task.id)));
+    let button_stop = button(text!("暂停"))
+      .on_press(Message::BzTask(BzTaskMessage::TryStopTask(task.id)));
+    let button_remove = button(text!("删除"))
+      .on_press(Message::BzTask(BzTaskMessage::RemoveTask(task.id)));
+    let buttons = match task.info.status {
+      BzTaskStatus::Queued => Vec::from([button_start, button_remove]),
+      BzTaskStatus::Running => Vec::from([button_stop]),
+      BzTaskStatus::Stopped => Vec::from([button_start, button_remove]),
+      BzTaskStatus::Completed => Vec::from([button_remove]),
+      BzTaskStatus::Failed => Vec::from([button_start, button_remove]),
+    };
+    container(row(
+      buttons.into_iter().map(Element::from).collect::<Vec<_>>(),
+    ))
+    .padding(3)
   }
 
   pub fn view_filter(&self) -> iced::Element<Message> {
-    // TODO shaping(text::Shaping::Advanced) 是为了显示中文 可能有其他方案
-    let button_all = button(text!("全部").shaping(text::Shaping::Advanced));
-    let button_downloading =
-      button(text!("进行中").shaping(text::Shaping::Advanced));
-    let button_init = button(text!("未开始").shaping(text::Shaping::Advanced));
-    let button_finish =
-      button(text!("已完成").shaping(text::Shaping::Advanced));
-    let button_error = button(text!("错误").shaping(text::Shaping::Advanced));
+    let button_all = button(text!("全部"));
+    let button_downloading = button(text!("进行中"));
+    let button_init = button(text!("未开始"));
+    let button_finish = button(text!("已完成"));
+    let button_error = button(text!("错误"));
     column![
       button_all,
       button_downloading,

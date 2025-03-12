@@ -6,10 +6,10 @@ mod view;
 mod zfs;
 
 use bz_task::{
-  BzTask, BzTaskExtraInfo, BzTaskId, BzTaskMessage, BzTaskRuntimeInfo,
+  BzTask, BzTaskExtraInfo, BzTaskId, BzTaskInfoFeedBackMessage, BzTaskMessage, BzTaskRuntimeInfo
 };
 use bz_task::{BzTaskFeedBack, BzTaskInfo, BzTaskStatus, BzTaskType};
-use error::BzError;
+use error::{BzError, BzResult};
 use iced::{
   Element, Font, Subscription, Task as Command, keyboard,
   widget::{Text, column, horizontal_rule},
@@ -27,10 +27,14 @@ pub fn main() -> iced::Result {
     .filter_module("bz_downloader", log::LevelFilter::Debug)
     .init();
 
+  let font_bytes = include_bytes!("../resource/MicrosoftYaHei-01.ttf");
+  let font = Font::with_name("微软雅黑");
   iced::application("BzDownloader", BzDownloader::update, BzDownloader::view)
     .subscription(BzDownloader::subscription)
-    .window_size((500.0, 800.0))
+    .window_size((1000.0, 700.0))
     .exit_on_close_request(false)
+    .font(font_bytes)
+    .default_font(font)
     .run_with(BzDownloader::new)
 }
 
@@ -93,7 +97,7 @@ enum Message {
 
   // Running
   TrayMenuEvent(MenuEvent),
-  TaskFeedBack(BzTaskFeedBack),
+  TaskInfoFeedBack(BzTaskInfoFeedBackMessage),
   BzTask(BzTaskMessage),
   WindowCloseRequest,
   SaveCompleted, //真正的关闭
@@ -143,82 +147,14 @@ impl BzDownloader {
         Command::none()
       }
       BzDownloader::Running(app_state) => {
-        log::debug!("Message in update : {:?}", message);
-
-        match message {
-          Message::TrayMenuEvent(event) => {
-            let menu_type = app_state.tray_state.menuids.get_type(&event.id);
-            let cmd = match menu_type {
-              BzMenuType::Display => {
-                log::debug!("TrayMenuEvent: Display");
-                window::get_latest().and_then(|window| {
-                  window::change_mode(window, Mode::Windowed)
-                })
-              }
-              BzMenuType::Hide => {
-                log::debug!("TrayMenuEvent: Hide");
-                window::get_latest()
-                  .and_then(|window| window::change_mode(window, Mode::Hidden))
-              }
-              BzMenuType::Exit => {
-                log::debug!("TrayMenuEvent: Exit");
-                // 给每个worker发送退出消息
-                // 等待所有worker退出
-                // 退出前保存任务列表
-                let task_infos: Vec<BzTaskInfo> = app_state
-                  .tasks
-                  .values()
-                  .map(|task| task.info.clone())
-                  .collect();
-                Command::perform(save_data(task_infos), |_| {
-                  Message::SaveCompleted
-                })
-              }
-              _ => Command::none(),
-            };
-            cmd
-          }
-          Message::SaveCompleted => {
-            log::debug!("SaveCompleted");
-            window::get_latest().and_then(window::close)
-          }
-          Message::WindowCloseRequest => {
-            log::debug!("WindowCloseRequest in App. Just Hide Window");
-            window::get_latest()
-              .and_then(|window| window::change_mode(window, Mode::Hidden))
-          }
-
-          Message::BzTask(task_meaasge) => {
-            log::debug!("BzTaskMessage: {:?}", task_meaasge);
-            match task_meaasge {
-              bz_task::BzTaskMessage::AddTask(task_info) => {
-                log::debug!("AddTask: {:?}", task_info);
-                let mut task = BzTask::from_info(task_info);
-                let (control_sender, join_handle) = bz_task::run_task(
-                  task.id,
-                  task.info.clone(),
-                  app_state.feedback_sender.clone(),
-                );
-                task.runtime = Some(BzTaskRuntimeInfo {
-                  sender: control_sender,
-                  join_handle,
-                });
-                app_state.tasks.insert(task.id, task);
-              }
-              _ => {}
-            }
+        log::debug!("[update] : {:?}", message);
+        let res = deal_running_message(app_state, message);
+        match res {
+          Ok(cmd) => cmd,
+          Err(err) => {
+            log::error!("Error in deal_running_message: {:?}", err);
             Command::none()
           }
-          Message::TaskFeedBack(feedback) => {
-            let task_id = feedback.task_id;
-            let progress = feedback.progress;
-
-            app_state.tasks.get_mut(&task_id).map(|task| {
-              task.extra.progress = progress;
-            });
-            Command::none()
-          }
-          _ => Command::none(),
         }
       }
     }
@@ -252,6 +188,82 @@ impl BzDownloader {
       task_feedback_subscription,
     ])
   }
+}
+
+fn deal_initializing_message(
+  app_pre_state: &mut AppPreState, message: Message,
+) -> BzResult<Command<Message>> {
+  Ok(Command::none())
+}
+
+fn deal_running_message(
+  app_state: &mut AppState, message: Message,
+) -> BzResult<Command<Message>> {
+  let cmd = match message {
+    Message::TrayMenuEvent(event) => {
+      let res = deal_trayevent(app_state, event);
+      res?
+    }
+    Message::SaveCompleted => {
+      log::debug!("SaveCompleted");
+      window::get_latest().and_then(window::close)
+    }
+    Message::WindowCloseRequest => {
+      log::debug!("WindowCloseRequest in App. Just Hide Window");
+      window::get_latest()
+        .and_then(|window| window::change_mode(window, Mode::Hidden))
+    }
+
+    Message::BzTask(task_meaasge) => {
+      log::debug!("[Message::BzTask] BzTaskMessage: {:?}", task_meaasge);
+      let res = bz_task::message::deal_bztask_message(app_state, task_meaasge);
+      Command::none()
+    }
+    Message::TaskInfoFeedBack(feedback) => {
+      let task_id = feedback.task_id;
+      let progress = feedback.progress;
+
+      app_state.tasks.get_mut(&task_id).map(|task| {
+        task.extra.progress = progress;
+      });
+      Command::none()
+    }
+    _ => Command::none(),
+  };
+  Ok(cmd)
+}
+
+fn deal_trayevent(
+  app_state: &mut AppState, event: MenuEvent,
+) -> BzResult<Command<Message>> {
+  let menu_type = app_state.tray_state.menuids.get_type(&event.id);
+  let cmd = match menu_type {
+    BzMenuType::Display => {
+      log::debug!("TrayMenuEvent: Display");
+      window::get_latest()
+        .and_then(|window| window::change_mode(window, Mode::Windowed))
+    }
+    BzMenuType::Hide => {
+      log::debug!("TrayMenuEvent: Hide");
+      window::get_latest()
+        .and_then(|window| window::change_mode(window, Mode::Hidden))
+    }
+    BzMenuType::Exit => {
+      log::debug!("TrayMenuEvent: Exit");
+      // 给每个worker发送退出消息
+      // 等待所有worker退出
+      // 退出前保存任务列表
+      let task_infos: Vec<BzTaskInfo> = app_state
+        .tasks
+        .values()
+        .map(|task| task.info.clone())
+        .collect();
+      Command::perform(save_data(task_infos), |_| Message::SaveCompleted)
+    }
+    _ => Command::none(),
+  };
+
+  Ok(cmd)
 }
 
 use directories::ProjectDirs;
@@ -291,8 +303,11 @@ async fn load_data() -> Vec<BzTaskInfo> {
 
 async fn save_data(task_infos: Vec<BzTaskInfo>) {
   let task_list = App_Dir().data_local_dir().join("task_list.json");
-  serde_json::to_writer(std::fs::File::create(task_list).unwrap(), &task_infos)
-    .unwrap();
+  serde_json::to_writer_pretty(
+    std::fs::File::create(task_list).unwrap(),
+    &task_infos,
+  )
+  .unwrap();
 }
 
 #[cfg(test)]

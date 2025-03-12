@@ -6,19 +6,19 @@ use serde::{Deserialize, Serialize, ser::SerializeStruct as _};
 use super::BzTaskId;
 
 // 用于展示和存储的状态
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub enum BzTaskStatus {
   Queued,
-  Downloading,
-  Paused,
+  Running,
+  Stopped,
   Completed,
   Failed,
 }
 
-// worker中任务的状态
+// worker中任务的状态 目前没有使用 后面处理loop中的错误的时候会用到
+// TODO
 pub enum TaskInnerStatus {
   Started,
-  Paused,
   Stopped,
   Failed,
 }
@@ -34,7 +34,7 @@ pub struct BzTask {
   pub id: BzTaskId,
   pub info: BzTaskInfo,
   pub extra: BzTaskExtraInfo,
-  pub runtime: Option<BzTaskRuntimeInfo>
+  pub runtime: Option<BzTaskRuntimeInfo>,
 }
 
 // 直接传递给各个worker
@@ -64,12 +64,11 @@ pub struct BzTaskExtraInfo {
   pub total_size: u64,
 }
 
-#[derive(Debug,)]
+#[derive(Debug)]
 pub struct BzTaskRuntimeInfo {
   pub sender: tokio::sync::mpsc::Sender<BzTaskControl>,
   pub join_handle: tokio::task::JoinHandle<()>,
 }
-
 
 // ==============================================
 
@@ -85,23 +84,43 @@ impl BzTask {
 }
 // ==============================================
 
+// #[derive(Debug, Clone)]
+// pub enum Control {
+//   Pause,
+//   Start,
+//   Stop,
+// }
+
 #[derive(Debug, Clone)]
-pub enum Control {
-  Pause,
-  Restart,
+pub enum BzTaskControl {
+  // Start, // 目前看后端任务没有暂停的状态 所以暂时不需要这个
   Stop,
 }
 
 #[derive(Debug, Clone)]
-pub struct BzTaskControl {
-  pub id: usize,
-  pub control: Control,
+pub enum BzTaskControlFeedBack {
+  Started,
+  Stoped,
+  Finished,
+  Failed,
 }
 
 #[derive(Debug, Clone)]
-pub struct BzTaskFeedBack {
+pub struct BzTaskControlFeedBackMessage {
+  pub task_id: BzTaskId,
+  pub control: BzTaskControlFeedBack,
+}
+
+#[derive(Debug, Clone)]
+pub struct BzTaskInfoFeedBackMessage {
   pub task_id: BzTaskId,
   pub progress: f32,
+}
+
+#[derive(Debug, Clone)]
+pub enum BzTaskFeedBack {
+  TaskConrol(BzTaskControlFeedBackMessage),
+  TaskInfo(BzTaskInfoFeedBackMessage),
 }
 
 // ==============================================
@@ -119,6 +138,19 @@ where
 {
   let s = String::deserialize(deserializer)?;
   Url::parse(&s).map_err(serde::de::Error::custom)
+}
+
+// ==============================================
+impl std::fmt::Display for BzTaskStatus {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match self {
+      BzTaskStatus::Queued => write!(f, "队列中"),
+      BzTaskStatus::Running => write!(f, "下载中"),
+      BzTaskStatus::Completed => write!(f, "已完成"),
+      BzTaskStatus::Failed => write!(f, "下载失败"),
+      BzTaskStatus::Stopped => write!(f, "暂停中"),
+    }
+  }
 }
 
 // impl Serialize for BzTaskInfo {

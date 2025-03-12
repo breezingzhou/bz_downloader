@@ -7,7 +7,9 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use crate::bz_task::{
-  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Control, TaskInnerStatus,
+  BzTaskControl, BzTaskControlFeedBack, BzTaskControlFeedBackMessage,
+  BzTaskFeedBack, BzTaskId, BzTaskInfo, BzTaskInfoFeedBackMessage,
+  TaskInnerStatus,
 };
 use crate::bz_task::{Task, TaskProgress};
 
@@ -155,41 +157,29 @@ impl Task for M3u8Task {
     &mut self, task_id: BzTaskId,
     mut control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
     feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
-  ) {
+  ) -> bool {
     // 下载ts文件
     // 更新下载进度
     let client = reqwest::Client::new();
-    let mut status = TaskInnerStatus::Started;
     loop {
       if self.porgress.todos.is_empty() {
-        break;
+        return true;
       }
       if let Ok(control_message) = control_receiver.try_recv() {
-        status = match control_message.control {
-          Control::Pause => {
-            log::info!("task paused");
-            TaskInnerStatus::Paused
+        match control_message {
+          BzTaskControl::Stop => {
+            let _ = feedback_sender
+              .send(BzTaskFeedBack::TaskConrol(BzTaskControlFeedBackMessage {
+                task_id,
+                control: BzTaskControlFeedBack::Stoped,
+              }))
+              .await;
+            return false;
           }
-          Control::Restart => {
-            log::info!("task restarted");
-            TaskInnerStatus::Paused
-          }
-          Control::Stop => {
-            log::info!("task stopped");
-            TaskInnerStatus::Stopped
+          _ => {
+            log::warn!("Unsupported control message: {:?}", control_message);
           }
         }
-      }
-
-      match status {
-        TaskInnerStatus::Paused => {
-          tokio::time::sleep(Duration::from_secs(1)).await;
-          continue;
-        }
-        TaskInnerStatus::Stopped => {
-          break;
-        }
-        _ => {}
       }
 
       let uri = self.porgress.todos.pop().unwrap();
@@ -202,10 +192,10 @@ impl Task for M3u8Task {
       file.write(&content).await.unwrap();
       self.porgress.update(M3u8TaskProgressMessage::Add(uri));
       let _ = feedback_sender
-        .send(BzTaskFeedBack {
+        .send(BzTaskFeedBack::TaskInfo(BzTaskInfoFeedBackMessage {
           task_id,
           progress: self.porgress.rate(),
-        })
+        }))
         .await;
     }
   }
