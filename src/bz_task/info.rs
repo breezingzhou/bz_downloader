@@ -34,7 +34,7 @@ pub struct BzTask {
   pub id: BzTaskId,
   pub info: BzTaskInfo,
   pub extra: BzTaskExtraInfo,
-  pub runtime: BzTaskRuntimeInfo
+  pub runtime: Option<BzTaskRuntimeInfo>
 }
 
 // 直接传递给各个worker
@@ -64,9 +64,10 @@ pub struct BzTaskExtraInfo {
   pub total_size: u64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug,)]
 pub struct BzTaskRuntimeInfo {
-  pub sender: Option<tokio::sync::mpsc::Sender<BzTaskControl>>,
+  pub sender: tokio::sync::mpsc::Sender<BzTaskControl>,
+  pub join_handle: tokio::task::JoinHandle<()>,
 }
 
 
@@ -78,7 +79,7 @@ impl BzTask {
       id: BzTaskId::unique(),
       info,
       extra: BzTaskExtraInfo::default(),
-      runtime: BzTaskRuntimeInfo::default(),
+      runtime: None,
     }
   }
 }

@@ -1,6 +1,8 @@
 use std::time::Duration;
 
-use crate::bz_task::{BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Task, TaskProgress};
+use crate::bz_task::{
+  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Task, TaskProgress,
+};
 
 pub struct ZfsTaskProgress {
   pub downloaded: Vec<String>,
@@ -60,7 +62,9 @@ impl ZfsTask {
 }
 
 impl Task for ZfsTask {
-  type Progress = ZfsTaskProgress;
+  fn new_task(task_info: BzTaskInfo) -> Self {
+    Self::new(task_info)
+  }
 
   async fn prepare(&mut self) {}
 
@@ -85,4 +89,8 @@ impl Task for ZfsTask {
         .await;
     }
   }
+
+  async fn finish(&mut self) {
+        todo!()
+    }
 }

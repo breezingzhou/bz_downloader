@@ -7,7 +7,7 @@ use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
 use crate::bz_task::{
-  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Control, TaskInnerStatus
+  BzTaskControl, BzTaskFeedBack, BzTaskId, BzTaskInfo, Control, TaskInnerStatus,
 };
 use crate::bz_task::{Task, TaskProgress};
 
@@ -94,10 +94,10 @@ pub struct M3u8Task {
 }
 
 impl M3u8Task {
-  pub fn new(task_info: &BzTaskInfo) -> Self {
+  pub fn new(task_info: BzTaskInfo) -> Self {
     Self {
-      task_info: task_info.clone(),
       porgress: M3u8TaskProgress::new(&task_info.cache),
+      task_info: task_info,
       uris: Vec::new(),
     }
   }
@@ -136,7 +136,9 @@ impl M3u8Task {
 }
 
 impl Task for M3u8Task {
-  type Progress = M3u8TaskProgress;
+  fn new_task(task_info: BzTaskInfo) -> Self {
+    Self::new(task_info)
+  }
 
   async fn prepare(&mut self) {
     // 下载 m3u8 url
@@ -207,6 +209,15 @@ impl Task for M3u8Task {
         .await;
     }
   }
+
+  async fn finish(&mut self) {
+    let mut target_file = fs::File::create(&self.task_info.dest).await.unwrap();
+    for uri in &self.uris {
+      let uri_file_path = self.task_info.cache.join(uri);
+      let content = fs::read(uri_file_path).await.unwrap();
+      target_file.write_all(&content).await.unwrap();
+    }
+  }
 }
 
 #[cfg(test)]
@@ -225,6 +236,8 @@ mod tests {
       kind: BzTaskType::M3u8,
       status: BzTaskStatus::Queued,
     };
-    let mut task = M3u8Task::new(&task_info);
+    // let mut task = M3u8Task::new(task_info);
+    let task_url = task_info.src.join("adc.ts").unwrap();
+    println!("task_url: {:?}", task_url);
   }
 }

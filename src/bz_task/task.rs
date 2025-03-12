@@ -2,7 +2,7 @@ use iced::{
   futures::{SinkExt, Stream},
   stream,
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
   bz_task::{BzTaskControl, BzTaskFeedBack, BzTaskInfo},
@@ -10,7 +10,7 @@ use crate::{
   zfs::ZfsTask,
 };
 
-use super::BzTaskId;
+use super::{BzTask, BzTaskId, BzTaskType};
 
 // Task Progress
 
@@ -26,14 +26,16 @@ pub trait TaskProgress {
   fn rate(&self) -> f32;
 }
 
+// 后端所代表的任务
 pub trait Task {
-  type Progress;
+  fn new_task(task_info: BzTaskInfo) -> Self;
   async fn prepare(&mut self);
   async fn start(
     &mut self, task_id: BzTaskId,
     control_receiver: mpsc::Receiver<BzTaskControl>,
     feedback_sender: mpsc::Sender<BzTaskFeedBack>,
   );
+  async fn finish(&mut self);
 }
 
 #[derive(Debug, Clone)]
@@ -44,18 +46,46 @@ pub enum BzTaskMessage {
   RemoveTask(usize),
 }
 
+pub async fn run_task_impl<T: Task>(
+  task_id: BzTaskId, task_info: BzTaskInfo,
+  control_receiver: mpsc::Receiver<BzTaskControl>,
+  feedback_sender: mpsc::Sender<BzTaskFeedBack>,
+) {
+  let mut task: T = T::new_task(task_info);
+  task.prepare().await;
+  task.start(task_id, control_receiver, feedback_sender).await;
+  task.finish().await;
+}
+
 // 创建两个channel 一个用于发送控制信息 一个用于接受进度信息
 pub fn run_task(
   task_id: BzTaskId, task_info: BzTaskInfo,
   feedback_sender: mpsc::Sender<BzTaskFeedBack>,
-) -> mpsc::Sender<BzTaskControl> {
+) -> (mpsc::Sender<BzTaskControl>, JoinHandle<()>) {
   let (control_sender, control_receiver) = mpsc::channel::<BzTaskControl>(100);
-  tokio::spawn(async move {
-    let mut task = ZfsTask::new(task_info);
-    task.prepare().await;
-    task.start(task_id, control_receiver, feedback_sender).await;
+  let handle = tokio::spawn(async move {
+    match task_info.kind {
+      BzTaskType::M3u8 => {
+        run_task_impl::<M3u8Task>(
+          task_id,
+          task_info,
+          control_receiver,
+          feedback_sender,
+        )
+        .await
+      }
+      BzTaskType::Zfs => {
+        run_task_impl::<ZfsTask>(
+          task_id,
+          task_info,
+          control_receiver,
+          feedback_sender,
+        )
+        .await
+      }
+    };
   });
-  return control_sender;
+  return (control_sender, handle);
 }
 
 // 供iced subscription使用 用于接受任务下载时候反馈的信息

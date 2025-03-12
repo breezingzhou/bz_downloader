@@ -22,6 +22,7 @@ use tray::BzMenuType;
 use tray_icon::{TrayIcon, menu::MenuEvent};
 
 pub fn main() -> iced::Result {
+  // TODO 把日志显示在界面上
   env_logger::Builder::new()
     .filter_module("bz_downloader", log::LevelFilter::Debug)
     .init();
@@ -71,7 +72,7 @@ impl From<AppPreState> for AppState {
           id: id.clone(),
           info: task_info.clone(),
           extra: BzTaskExtraInfo::default(),
-          runtime: BzTaskRuntimeInfo::default(),
+          runtime: None,
         };
         (id, task)
       })
@@ -95,6 +96,7 @@ enum Message {
   TaskFeedBack(BzTaskFeedBack),
   BzTask(BzTaskMessage),
   WindowCloseRequest,
+  SaveCompleted, //真正的关闭
 }
 
 impl BzDownloader {
@@ -115,7 +117,7 @@ impl BzDownloader {
     match self {
       BzDownloader::Initializing(app_pre_state) => {
         match message {
-          Message::Loaded(mut task_infos) => {
+          Message::Loaded(task_infos) => {
             log::debug!("Loaded");
             app_pre_state.task_infos = Some(task_infos);
             if app_pre_state.is_ready() {
@@ -163,12 +165,22 @@ impl BzDownloader {
                 // 给每个worker发送退出消息
                 // 等待所有worker退出
                 // 退出前保存任务列表
-                save_data(&app_state.tasks);
-                window::get_latest().and_then(window::close)
+                let task_infos: Vec<BzTaskInfo> = app_state
+                  .tasks
+                  .values()
+                  .map(|task| task.info.clone())
+                  .collect();
+                Command::perform(save_data(task_infos), |_| {
+                  Message::SaveCompleted
+                })
               }
               _ => Command::none(),
             };
             cmd
+          }
+          Message::SaveCompleted => {
+            log::debug!("SaveCompleted");
+            window::get_latest().and_then(window::close)
           }
           Message::WindowCloseRequest => {
             log::debug!("WindowCloseRequest in App. Just Hide Window");
@@ -182,12 +194,15 @@ impl BzDownloader {
               bz_task::BzTaskMessage::AddTask(task_info) => {
                 log::debug!("AddTask: {:?}", task_info);
                 let mut task = BzTask::from_info(task_info);
-                let control_sender = bz_task::run_task(
+                let (control_sender, join_handle) = bz_task::run_task(
                   task.id,
                   task.info.clone(),
                   app_state.feedback_sender.clone(),
                 );
-                task.runtime.sender = Some(control_sender);
+                task.runtime = Some(BzTaskRuntimeInfo {
+                  sender: control_sender,
+                  join_handle,
+                });
                 app_state.tasks.insert(task.id, task);
               }
               _ => {}
@@ -249,23 +264,23 @@ fn App_Dir() -> ProjectDirs {
 fn init_dirs() {
   let app_dir = App_Dir();
   let cache_dir = app_dir.cache_dir();
-  let data_dir = app_dir.data_dir();
+  let data_local_dir = app_dir.data_local_dir();
   log::debug!("cache_dir: {:?}", cache_dir);
-  log::debug!("data_dir: {:?}", data_dir);
+  log::debug!("data_local_dir: {:?}", data_local_dir);
   if !cache_dir.exists() {
     log::info!("cache_dir not exists");
     log::info!("create cache_dir: {}", cache_dir.display());
     std::fs::create_dir_all(cache_dir).unwrap();
   }
-  if !data_dir.exists() {
+  if !data_local_dir.exists() {
     log::info!("data_dir not exists");
-    log::info!("create data_dir: {}", data_dir.display());
-    std::fs::create_dir_all(data_dir).unwrap();
+    log::info!("create data_dir: {}", data_local_dir.display());
+    std::fs::create_dir_all(data_local_dir).unwrap();
   }
 }
 
 async fn load_data() -> Vec<BzTaskInfo> {
-  let task_list = App_Dir().data_dir().join("task_list.json");
+  let task_list = App_Dir().data_local_dir().join("task_list.json");
   if !task_list.exists() {
     return Vec::new();
   }
@@ -274,10 +289,8 @@ async fn load_data() -> Vec<BzTaskInfo> {
   task_infos
 }
 
-async fn save_data(tasks: &BTreeMap<BzTaskId, BzTask>) {
-  let task_list = App_Dir().data_dir().join("task_list.json");
-  let task_infos: Vec<&BzTaskInfo> =
-    tasks.values().map(|task| &task.info).collect();
+async fn save_data(task_infos: Vec<BzTaskInfo>) {
+  let task_list = App_Dir().data_local_dir().join("task_list.json");
   serde_json::to_writer(std::fs::File::create(task_list).unwrap(), &task_infos)
     .unwrap();
 }
