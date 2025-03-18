@@ -5,14 +5,14 @@ use iced::{
 use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::{
-  Message,
+  bz_downloader::Message,
   bz_task::{BzTaskControl, BzTaskFeedBack, BzTaskInfo},
   m3u8::M3u8Task,
   zfs::ZfsTask,
 };
 
 use super::{
-  BzTask, BzTaskControlFeedBackMessage, BzTaskId, BzTaskInfoFeedBackMessage,
+  BzTaskControlFeedBackMessage, BzTaskId, BzTaskInfoFeedBackMessage,
   BzTaskMessage, BzTaskType, info::BzTaskControlFeedBack,
 };
 
@@ -101,12 +101,10 @@ pub fn run_task(
 }
 
 // 供iced subscription使用 用于接受任务下载时候反馈的信息
-pub fn feed_back_subscription() -> impl Stream<Item = crate::Message> {
+pub fn feed_back_subscription() -> impl Stream<Item = Message> {
   stream::channel(100, |mut output| async move {
     let (sender, mut receiver) = mpsc::channel::<BzTaskFeedBack>(100);
-    let _ = output
-      .send(crate::Message::FeedbackChannelCreated(sender))
-      .await;
+    let _ = output.send(Message::FeedbackChannelCreated(sender)).await;
     loop {
       if let Some(message) = receiver.recv().await {
         match message {

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use reqwest::Url;
-use serde::{Deserialize, Serialize, ser::SerializeStruct as _};
+use serde::{Deserialize, Serialize};
 
 use super::BzTaskId;
 
@@ -97,6 +97,7 @@ pub enum BzTaskControl {
   Stop,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum BzTaskControlFeedBack {
   Started,

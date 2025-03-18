@@ -1,25 +1,15 @@
 use std::collections::HashMap;
-use std::str::FromStr as _;
 use std::time::Duration;
 
 use iced::futures::SinkExt;
-use iced::futures::stream::{Stream, StreamExt};
+use iced::futures::stream::Stream;
 use tray_icon::TrayIcon;
-use tray_icon::menu::MenuItemBuilder;
 use tray_icon::{
   TrayIconBuilder,
-  menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem},
+  menu::{Menu, MenuId, MenuItem},
 };
 
-use crate::Message;
-
-#[derive(Debug)]
-
-pub enum TrayMessage {
-  Quit,
-  Display,
-  Hide,
-}
+use crate::bz_downloader::Message;
 
 #[derive(Clone)]
 pub struct TrayState {

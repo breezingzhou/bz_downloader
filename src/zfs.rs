@@ -71,7 +71,7 @@ impl Task for ZfsTask {
 
   async fn start(
     &mut self, task_id: BzTaskId,
-    control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
+    _control_receiver: tokio::sync::mpsc::Receiver<BzTaskControl>,
     feedback_sender: tokio::sync::mpsc::Sender<BzTaskFeedBack>,
   ) -> bool {
     let mut i = 0;

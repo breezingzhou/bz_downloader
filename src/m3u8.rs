@@ -1,7 +1,5 @@
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
-use std::{collections::HashSet, time::Duration};
+use std::collections::HashSet;
 
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
@@ -9,7 +7,6 @@ use tokio::io::AsyncWriteExt;
 use crate::bz_task::{
   BzTaskControl, BzTaskControlFeedBack, BzTaskControlFeedBackMessage,
   BzTaskFeedBack, BzTaskId, BzTaskInfo, BzTaskInfoFeedBackMessage,
-  TaskInnerStatus,
 };
 use crate::bz_task::{Task, TaskProgress};
 
@@ -213,7 +210,7 @@ impl Task for M3u8Task {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::bz_task::{BzTaskId, BzTaskStatus, BzTaskType};
+  use crate::bz_task::{BzTaskStatus, BzTaskType};
   use tokio;
 
   #[tokio::test]

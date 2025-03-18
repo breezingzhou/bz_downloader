@@ -1,7 +1,5 @@
 use crate::{
-  AppState, Message,
-  bz_task::{self, BzTask, BzTaskRuntimeInfo, BzTaskStatus},
-  error::{BzError, BzResult},
+  app_state::AppState, bz_downloader::Message, bz_task::{self, BzTask, BzTaskRuntimeInfo, BzTaskStatus}, error::{BzError, BzResult}
 };
 use iced::Task as Command;
 

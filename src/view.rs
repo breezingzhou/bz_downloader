@@ -2,20 +2,19 @@ use iced::{
   Element,
   Length::FillPortion,
   widget::{
-    Container, Text, button, column, container, horizontal_rule, progress_bar,
-    row, text, vertical_rule,
+    Container, button, column, container, horizontal_rule, progress_bar, row,
+    text, vertical_rule,
   },
 };
 use reqwest::Url;
 
 use crate::{
-  AppState, Message,
-  bz_task::{
-    self, BzTask, BzTaskInfo, BzTaskMessage, BzTaskStatus, BzTaskType,
-  },
+  app_state::AppState,
+  bz_downloader::Message,
+  bz_task::{BzTask, BzTaskInfo, BzTaskMessage, BzTaskStatus, BzTaskType},
 };
 
-impl crate::BzDownloader {
+impl crate::bz_downloader::BzDownloader {
   pub fn view_header(&self) -> iced::Element<Message> {
     let task_info = BzTaskInfo {
       src: Url::parse("https://svipsvip.ffzy-online5.com/20250118/37333_517b17a8/2000k/hls/mixed.m3u8").unwrap(),
